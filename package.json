@@ -1,0 +1,12 @@
+{
+  "type": "module",
+  "dependencies": {
+    "@vendia/serverless-express": "^4.12.6",
+    "axios": "^1.9.0",
+    "dotenv": "^16.5.0",
+    "express": "^5.1.0"
+  },
+  "devDependencies": {
+    "playwright": "^1.52.0"
+  }
+}
