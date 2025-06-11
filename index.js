@@ -28,6 +28,9 @@ app.use(express.json());
 
 const LOOPNET_ENDPOINT = process.env.LOOPNET_ENDPOINT
 const BIZBUYSELL_ENDPOINT = process.env.BIZBUYSELL_ENDPOINT
+const crexiStartingUrl = process.env.CREXI_START_URL
+const CREXI_ENDPOINT = process.env.CREXI_ENDPOINT
+
 app.get("/extract-listings", async (req, res) => {
   try {
     // Step 1: Add filters to the loopnet website 
@@ -43,22 +46,22 @@ app.get("/extract-listings", async (req, res) => {
     // Step 2: Create request payload for loopnet 
 
     const LOOPNET_REQUEST_PAYLOAD = {
-        startUrls: [
-            {
-            url: loopStartingUrl
-            },
-        ],
-        includeListingDetails: true,
-        downloadImages: false,
-        maxImages: 10,
-        maxItems: 100,
-        maxConcurrency: 10,
-        minConcurrency: 1,
-        maxRequestRetries: 100,
-        proxy: {
-            useApifyProxy: true,
-            apifyProxyGroups: ["RESIDENTIAL"],
+      startUrls: [
+        {
+          url: loopStartingUrl
         },
+      ],
+      includeListingDetails: true,
+      downloadImages: false,
+      maxImages: 10,
+      maxItems: 100,
+      maxConcurrency: 10,
+      minConcurrency: 1,
+      maxRequestRetries: 100,
+      proxy: {
+        useApifyProxy: true,
+        apifyProxyGroups: ["RESIDENTIAL"],
+      },
     };
 
     // Step 3: Add filters to bizbuysell website
@@ -74,13 +77,31 @@ app.get("/extract-listings", async (req, res) => {
 
     // Step 4: Create request payload for bizbuysell
     const BIZREQUEST_PAYLOAD = {
-        maxItems: 100,
-        startUrls: [
-            bizStartUrl
-        ],
+      maxItems: 100,
+      startUrls: [
+        bizStartUrl
+      ],
     };
 
-    // Step 5: Request for Loopnet data
+    // Step 5: Create request payload for crexi
+    const CREXIREQUEST_PAYLOAD = {
+      "includeBrokerDetails": true,
+      "includeListingDetails": true,
+      "moreResults": true,
+      "proxy": {
+        "useApifyProxy": true,
+        "apifyProxyGroups": [
+          "RESIDENTIAL"
+        ],
+        "apifyProxyCountry": "US"
+      },
+      "startUrls": [
+          "https://www.crexi.com/properties?pageSize=60&askingPriceMin=5000000&placeIds%5B%5D=ChIJ0bGIwKBMTIYRG_sUSMt0RHI&placeIds%5B%5D=ChIJNx0mIcKmTYYRxV-8JFisk-c&placeIds%5B%5D=ChIJo4y02gIdTIYR7oyxmQQlBOE&placeIds%5B%5D=ChIJL-y8URd6TIYRQe29kxTajzo&placeIds%5B%5D=ChIJpXU5wPboToYRoRsDS4SukkU&placeIds%5B%5D=ChIJ-Xm73adITIYRhrb-NBX-zks&placeIds%5B%5D=ChIJDfdJl-59ToYRRjpXA71-c1A&placeIds%5B%5D=ChIJtwY_UMx5TIYRUYXhygiSno8&placeIds%5B%5D=ChIJ0ynh6VahSYYR5gx-mnQCBsA&placeIds%5B%5D=ChIJtQAI0kg8SYYRsWxBOpun6Go&subtypes%5B%5D=RV%20Park&subtypes%5B%5D=Industrial&subtypes%5B%5D=Car%20Wash&types%5B%5D=Multifamily&types%5B%5D=Land&types%5B%5D=Senior%20Living&types%5B%5D=Special%20Purpose&mapCenter=33.02655191126231,-96.89366667531431&mapZoom=8&excludeUnpriced=true"
+      ]
+    }
+
+
+    // Step 6: Request for Loopnet data
     const loopnetResp = await axios.post(LOOPNET_ENDPOINT, LOOPNET_REQUEST_PAYLOAD);
     if (loopnetResp.status !== 201) {
       return res.status(500).json({ error: `Failed to fetch data from Apify. Status: ${loopnetResp.status}` });
@@ -90,10 +111,10 @@ app.get("/extract-listings", async (req, res) => {
 
     const timestamp = new Date();
     const istTimestamp = new Date().toLocaleString("en-IN", {
-    timeZone: "Asia/Kolkata",
+      timeZone: "Asia/Kolkata",
     });
 
-    // Step 6: Extract & transform Loopnet data
+    // Step 7: Extract & transform Loopnet data
     const extractedData = rawData.map((item) => ({
       "DATE ADDED": item.summary?.createdDate ? new Date(item.summary.createdDate).toLocaleString() : null,
       "LISTING EXTRACTED ON": istTimestamp,
@@ -116,44 +137,77 @@ app.get("/extract-listings", async (req, res) => {
 
 
 
-    // Step 7: Request BizBuySell data
+    // Step 8: Request BizBuySell data
     const bizResp = await axios.post(BIZBUYSELL_ENDPOINT, BIZREQUEST_PAYLOAD);
     if (bizResp.status !== 201) {
-        return res.status(500).json({ error: `Failed to fetch data from Apify. Status: ${bizResp.status}` });
+      return res.status(500).json({ error: `Failed to fetch data from Apify. Status: ${bizResp.status}` });
     }
     const rawBizData = bizResp.data;
 
-    // Step 8: Extract & transform BizBuySell data from structured array
+    // Step 9: Extract & transform BizBuySell data from structured array
     rawBizData.forEach((item) => {
-        extractedData.push({
-            "DATE ADDED": item["DATE ADDED"],
-            "LISTING EXTRACTED ON": istTimestamp,
-            SOURCE: "BIZ BUY SELL",
-            LOCATION: item["LOCATION"] || null,
-            TITLE: item["TITLE"] || null,
-            PRICE: item["PRICE"] || null,
-            EBITDA: item["EBITDA"] || "Not Disclosed",
-            REVENUE: item["REVENUE"] || null,
-            "CASH FLOW": item["CASH FLOW"] || null,
-            "LINK TO DEAL": item["LINK TO DEAL"] || null,
-            "NUMBER OF EMPLOYEES": item["NUMBER OF EMPLOYEES"] || null,
-            "YEAR ESTABLISHED": item["YEAR ESTABLISHED"] || null,
-            "BROKER FIRM": item["INTERMEDIARY FIRM"] || null,
-            "BROKER NAME": item["INTERMEDIARY NAME"] || null,
-            "BROKER PHONE NUMBER": item["INTERMEDIARY PHONE"] || null,
-            INVENTORY: item["INVENTORY"] || null,
-            "SELLER TYPE": item["SELLER TYPE"] || null,
-        });
+      extractedData.push({
+        "DATE ADDED": item["DATE ADDED"],
+        "LISTING EXTRACTED ON": istTimestamp,
+        SOURCE: "BIZ BUY SELL",
+        LOCATION: item["LOCATION"] || null,
+        TITLE: item["TITLE"] || null,
+        PRICE: item["PRICE"] || null,
+        EBITDA: item["EBITDA"] || "Not Disclosed",
+        REVENUE: item["REVENUE"] || null,
+        "CASH FLOW": item["CASH FLOW"] || null,
+        "LINK TO DEAL": item["LINK TO DEAL"] || null,
+        "NUMBER OF EMPLOYEES": item["NUMBER OF EMPLOYEES"] || null,
+        "YEAR ESTABLISHED": item["YEAR ESTABLISHED"] || null,
+        "BROKER FIRM": item["INTERMEDIARY FIRM"] || null,
+        "BROKER NAME": item["INTERMEDIARY NAME"] || null,
+        "BROKER PHONE NUMBER": item["INTERMEDIARY PHONE"] || null,
+        INVENTORY: item["INVENTORY"] || null,
+        "SELLER TYPE": item["SELLER TYPE"] || null,
+      });
     });
+    // Step 10: Request Crexi data
+    const crexiResp = await axios.post(CREXI_ENDPOINT, CREXIREQUEST_PAYLOAD);
+    if (crexiResp.status !== 201) {
+      return res.status(500).json({ error: `Failed to fetch data from Apify. Status: ${bizResp.status}` });
+    }
+    const rawCrexiData = crexiResp.data;
+
+    // Step 10: Extract & transform Crexi data from structured array
+
+    rawCrexiData.forEach((item) => {
+      extractedData.push({
+        "DATE ADDED": item.activatedOn,
+        "LISTING EXTRACTED ON": istTimestamp,
+        SOURCE: "CREXI",
+        LOCATION: item.locations?.fullAddress | null,
+        TITLE: item.name || null,
+        PRICE: item.askingPrice || null,
+        EBITDA: "Not Disclosed",
+        REVENUE: null,
+        "CASH FLOW": null,
+        "LINK TO DEAL": item.url || null,
+        "NUMBER OF EMPLOYEES": null,
+        "YEAR ESTABLISHED": null,
+        "BROKER FIRM": item.brokers?.[0]?.brokerage?.name || null,
+        "BROKER NAME": item.brokers?.[0]
+          ? `${item.brokers[0].firstName} ${item.brokers[0].lastName}`
+          : 'N/A' || null,
+        "BROKER PHONE NUMBER":null,
+        INVENTORY: item["INVENTORY"] || null,
+        "SELLER TYPE": item["SELLER TYPE"] || null,
+      });
+    });
+
 
     console.log(extractedData);
 
 
 
-    // Step 9: Save extracted data
+    // Step 11: Save extracted data
     await fs.writeFile("extracted_listings.json", JSON.stringify(extractedData, null, 4), "utf-8");
 
-    // Step 10: Return extracted data
+    // Step 12: Return extracted data
     return res.json(extractedData);
   } catch (error) {
     console.error("Error:", error);
@@ -161,9 +215,9 @@ app.get("/extract-listings", async (req, res) => {
   }
 });
 
-// const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || 3000;
 
-// app.listen(PORT, () => {
-//   console.log(`Server running on http://localhost:${PORT}`);
-// });
-export default app;
+app.listen(PORT, () => {
+  console.log(`Server running on http://localhost:${PORT}`);
+});
+// export default app;
