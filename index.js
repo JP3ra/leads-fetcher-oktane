@@ -2,80 +2,37 @@ import express from "express"
 import axios from "axios"
 import fs from "fs/promises"
 import dotenv from "dotenv"
-import runLoopnetPlaywright from "./controller/loopnet_playwright.js";
-import runBizBuySellPlaywright from "./controller/bizbuy_playwright.js";
-
-
-function getPrimaryLink(links) {
-  if (Array.isArray(links)) {
-    for (const link of links) {
-      if (link.link) {
-        return link.link;
-      }
-    }
-  }
-  return null;
-}
-
+import {runBizBuySellPlaywright} from "./controller/bizbuy_controller.js";
+import { retriveListingUrl, scrapeZillowListings, findDate} from "./controller/zillow_controller.js";
+import { retrievePropstreamData } from "./controller/propstream_controller.js";
+import { enrichBrokerData } from "./controller/apollo_controllers.js";
 dotenv.config();
 
 const app = express();
 app.use(express.json());
 
 // Getting the endpoints
-
-
-
-const LOOPNET_ENDPOINT = process.env.LOOPNET_ENDPOINT
 const BIZBUYSELL_ENDPOINT = process.env.BIZBUYSELL_ENDPOINT
-const crexiStartingUrl = process.env.CREXI_START_URL
-const CREXI_ENDPOINT = process.env.CREXI_ENDPOINT
+
+
+// route to extract listings from the target websites 
 
 app.get("/extract-listings", async (req, res) => {
   try {
-    // Step 1: Add filters to the loopnet website 
-    const loopResponse = await runLoopnetPlaywright();
-    if (!loopResponse || (loopResponse.statusCode !== 200 && loopResponse.statusCode !== 201)) {
-      return res.status(500).json({
-        error: `Failed to fetch data from Apify for LoopNet. Status: ${loopResponse?.status}`,
-      });
-    }
-
-    const loopStartingUrl = loopResponse.body.filteredUrl
-
-    // Step 2: Create request payload for loopnet 
-
-    const LOOPNET_REQUEST_PAYLOAD = {
-      startUrls: [
-        {
-          url: loopStartingUrl
-        },
-      ],
-      includeListingDetails: true,
-      downloadImages: false,
-      maxImages: 10,
-      maxItems: 100,
-      maxConcurrency: 10,
-      minConcurrency: 1,
-      maxRequestRetries: 100,
-      proxy: {
-        useApifyProxy: true,
-        apifyProxyGroups: ["RESIDENTIAL"],
-      },
-    };
-
-    // Step 3: Add filters to bizbuysell website
-
+    // Step 1: Add filters to bizbuysell website
     const bizResponse = await runBizBuySellPlaywright();
     if (!bizResponse || (bizResponse.statusCode !== 200 && bizResponse.statusCode !== 201)) {
       return res.status(500).json({
         error: `Failed to fetch data from Apify for LoopNet. Status: ${bizResponse?.status}`,
       });
     }
-
     const bizStartUrl = bizResponse.body.filteredUrl;
+    const istDate = new Date().toLocaleDateString("en-IN", {
+      timeZone: "Asia/Kolkata",
+    });
 
-    // Step 4: Create request payload for bizbuysell
+
+    // Step 2: Create request payload for bizbuysell
     const BIZREQUEST_PAYLOAD = {
       maxItems: 100,
       startUrls: [
@@ -83,131 +40,117 @@ app.get("/extract-listings", async (req, res) => {
       ],
     };
 
-    // Step 5: Create request payload for crexi
-    const CREXIREQUEST_PAYLOAD = {
-      "includeBrokerDetails": true,
-      "includeListingDetails": true,
-      "moreResults": true,
-      "proxy": {
-        "useApifyProxy": true,
-        "apifyProxyGroups": [
-          "RESIDENTIAL"
-        ],
-        "apifyProxyCountry": "US"
-      },
-      "startUrls": [
-          "https://www.crexi.com/properties?pageSize=60&askingPriceMin=5000000&placeIds%5B%5D=ChIJ0bGIwKBMTIYRG_sUSMt0RHI&placeIds%5B%5D=ChIJNx0mIcKmTYYRxV-8JFisk-c&placeIds%5B%5D=ChIJo4y02gIdTIYR7oyxmQQlBOE&placeIds%5B%5D=ChIJL-y8URd6TIYRQe29kxTajzo&placeIds%5B%5D=ChIJpXU5wPboToYRoRsDS4SukkU&placeIds%5B%5D=ChIJ-Xm73adITIYRhrb-NBX-zks&placeIds%5B%5D=ChIJDfdJl-59ToYRRjpXA71-c1A&placeIds%5B%5D=ChIJtwY_UMx5TIYRUYXhygiSno8&placeIds%5B%5D=ChIJ0ynh6VahSYYR5gx-mnQCBsA&placeIds%5B%5D=ChIJtQAI0kg8SYYRsWxBOpun6Go&subtypes%5B%5D=RV%20Park&subtypes%5B%5D=Industrial&subtypes%5B%5D=Car%20Wash&types%5B%5D=Multifamily&types%5B%5D=Land&types%5B%5D=Senior%20Living&types%5B%5D=Special%20Purpose&mapCenter=33.02655191126231,-96.89366667531431&mapZoom=8&excludeUnpriced=true"
-      ]
-    }
-
-
-    // Step 6: Request for Loopnet data
-    const loopnetResp = await axios.post(LOOPNET_ENDPOINT, LOOPNET_REQUEST_PAYLOAD);
-    if (loopnetResp.status !== 201) {
-      return res.status(500).json({ error: `Failed to fetch data from Apify. Status: ${loopnetResp.status}` });
-    }
-    const rawData = loopnetResp.data;
-
-
-    const timestamp = new Date();
-    const istTimestamp = new Date().toLocaleString("en-IN", {
-      timeZone: "Asia/Kolkata",
-    });
-
-    // Step 7: Extract & transform Loopnet data
-    const extractedData = rawData.map((item) => ({
-      "DATE ADDED": item.summary?.createdDate ? new Date(item.summary.createdDate).toLocaleString() : null,
-      "LISTING EXTRACTED ON": istTimestamp,
-      SOURCE: "LOOPNET",
-      LOCATION: item.summary?.title?.includes("|") ? item.summary.title.split("|").pop().trim() : null,
-      TITLE: item.summary?.title || null,
-      PRICE: item.propertyFacts?.Price || null,
-      EBITDA: "Not disclosed",
-      REVENUE: null,
-      "CASH FLOW": null,
-      "LINK TO DEAL": getPrimaryLink(item.links),
-      "NUMBER OF EMPLOYEES": null,
-      "YEAR ESTABLISHED": item.propertyFacts?.YearBuilt || null,
-      "BROKER FIRM": item.Broker || null,
-      "BROKER NAME": item.agent_fullName || null,
-      "BROKER PHONE NUMBER": item.phone || null,
-      INVENTORY: null,
-      "SELLER TYPE": item.propertyFacts?.SaleType || null,
-    }));
-
-
-
-    // Step 8: Request BizBuySell data
+    // Step 3: Request BizBuySell data
     const bizResp = await axios.post(BIZBUYSELL_ENDPOINT, BIZREQUEST_PAYLOAD);
     if (bizResp.status !== 201) {
       return res.status(500).json({ error: `Failed to fetch data from Apify. Status: ${bizResp.status}` });
     }
     const rawBizData = bizResp.data;
 
-    // Step 9: Extract & transform BizBuySell data from structured array
-    rawBizData.forEach((item) => {
-      extractedData.push({
-        "DATE ADDED": item["DATE ADDED"],
-        "LISTING EXTRACTED ON": istTimestamp,
-        SOURCE: "BIZ BUY SELL",
-        LOCATION: item["LOCATION"] || null,
-        TITLE: item["TITLE"] || null,
-        PRICE: item["PRICE"] || null,
-        EBITDA: item["EBITDA"] || "Not Disclosed",
-        REVENUE: item["REVENUE"] || null,
-        "CASH FLOW": item["CASH FLOW"] || null,
-        "LINK TO DEAL": item["LINK TO DEAL"] || null,
-        "NUMBER OF EMPLOYEES": item["NUMBER OF EMPLOYEES"] || null,
-        "YEAR ESTABLISHED": item["YEAR ESTABLISHED"] || null,
-        "BROKER FIRM": item["INTERMEDIARY FIRM"] || null,
-        "BROKER NAME": item["INTERMEDIARY NAME"] || null,
-        "BROKER PHONE NUMBER": item["INTERMEDIARY PHONE"] || null,
-        INVENTORY: item["INVENTORY"] || null,
-        "SELLER TYPE": item["SELLER TYPE"] || null,
-      });
-    });
-    // Step 10: Request Crexi data
-    const crexiResp = await axios.post(CREXI_ENDPOINT, CREXIREQUEST_PAYLOAD);
-    if (crexiResp.status !== 201) {
-      return res.status(500).json({ error: `Failed to fetch data from Apify. Status: ${bizResp.status}` });
+
+    // Step 4: Extract & transform BizBuySell data from structured array
+    const extractedData = rawBizData.map((item) => ({
+      "DATE ADDED": item["DATE ADDED"],
+      "LISTING EXTRACTED ON": istDate,
+      SOURCE: "BIZ BUY SELL",
+      LOCATION: item["LOCATION"] || null,
+      TITLE: item["TITLE"] || null,
+      PRICE: item["PRICE"] || null,
+      EBITDA: item["EBITDA"] || "Not Disclosed",
+      REVENUE: item["REVENUE"] || null,
+      "CASH FLOW": item["CASH FLOW"] || null,
+      "LINK TO DEAL": item["LINK TO DEAL"] || null,
+      "BROKER FIRM": item["INTERMEDIARY FIRM"] || null,
+      "BROKER NAME": item["INTERMEDIARY NAME"] || null,
+      "BROKER PHONE NUMBER": item["INTERMEDIARY PHONE"] || null,
+      "BROKER EMAIL": "N/A"
+
+    }));
+
+
+
+    // Step 5: Extract zillow starting urls
+    const zillowRespo = await retriveListingUrl();
+    if (!zillowRespo) {
+      console.error(`Failed to fetch data from Apify for Zillow normal. Status: ${zillowRespo?.status}`);
+      return;
     }
-    const rawCrexiData = crexiResp.data;
+    const listingUrls = zillowRespo;
+    if (!listingUrls) {
+      console.error("Listing URLs not found in response.");
+      return;
+    }
 
-    // Step 10: Extract & transform Crexi data from structured array
 
-    rawCrexiData.forEach((item) => {
+    // Step 6: Retrieve information from each listing
+    const detailZillowRespo = await scrapeZillowListings(listingUrls);
+    if (!detailZillowRespo) {
+      console.error(`Failed to fetch detailed data from Apify for Zillow Detail. Status: ${detailZillowRespo?.status}`);
+      return;
+    }
+    const rawZillowData = detailZillowRespo;
+
+    // Step 7: Extract & transform Zillow data from structured array
+    rawZillowData.forEach((item) => {
       extractedData.push({
-        "DATE ADDED": item.activatedOn,
-        "LISTING EXTRACTED ON": istTimestamp,
-        SOURCE: "CREXI",
-        LOCATION: item.locations?.fullAddress | null,
-        TITLE: item.name || null,
-        PRICE: item.askingPrice || null,
+        "DATE ADDED": findDate(item.daysOnZillow),
+        "LISTING EXTRACTED ON": istDate,
+        SOURCE: "ZILLOW",
+        LOCATION: (item.city && item.state) ? `${item.city}, ${item.state}` : "N/A",
+        TITLE: "N/A",
+        PRICE: item.price || "N/A",
         EBITDA: "Not Disclosed",
-        REVENUE: null,
-        "CASH FLOW": null,
-        "LINK TO DEAL": item.url || null,
-        "NUMBER OF EMPLOYEES": null,
-        "YEAR ESTABLISHED": null,
-        "BROKER FIRM": item.brokers?.[0]?.brokerage?.name || null,
-        "BROKER NAME": item.brokers?.[0]
-          ? `${item.brokers[0].firstName} ${item.brokers[0].lastName}`
-          : 'N/A' || null,
-        "BROKER PHONE NUMBER":null,
-        INVENTORY: item["INVENTORY"] || null,
-        "SELLER TYPE": item["SELLER TYPE"] || null,
+        REVENUE: "Not Disclosed",
+        "CASH FLOW": "Not Disclosed",
+        "LINK TO DEAL": `https://www.zillow.com/${item.hdpUrl?.replace(/^\/?/, '')}`,
+        "BROKER FIRM": item.attributionInfo?.brokerName || "N/A",
+        "BROKER NAME": item.attributionInfo?.agentName || "N/A",
+        "BROKER PHONE NUMBER": item.attributionInfo?.agentPhoneNumber || "N/A",
+        "BROKER EMAIL": "N/A"
       });
     });
 
+
+    // Step 8: Retrieve information from propstream controller
+    const propstreamRespo = await retrievePropstreamData();
+    if (!propstreamRespo || propstreamRespo.status !== 200) { 
+      console.error(`Failed to fetch data from Propstream. Status: ${propstreamRespo?.status}`);
+      return res.status(500).json({ error: `Failed to fetch data from Propstream. Status: ${propstreamRespo?.status}` });
+    }
+
+    const propstreamData = propstreamRespo.body.scrapedResults;
+    propstreamData.forEach((item) => {
+      extractedData.push({
+        "DATE ADDED": item.statusDate,
+        "LISTING EXTRACTED ON": istDate,
+        SOURCE: "PROPSTREAM",
+        LOCATION: item.title || "N/A",
+        TITLE: "N/A",
+        PRICE: item.price,
+        EBITDA: "Not Disclosed",
+        REVENUE: "Not Disclosed",
+        "CASH FLOW": "Not Disclosed",
+        "LINK TO DEAL": item.link || "N/A",
+        "BROKER FIRM": item.brokerFirm || "N/A",
+        "BROKER NAME": item.agentName|| "N/A",
+        "BROKER PHONE NUMBER": item.agentPhone || "N/A",
+        "BROKER EMAIL": item.agentEmail || "N/A"
+      });
+    });
 
     console.log(extractedData);
 
+    const enriched = await enrichBrokerData(extractedData);
 
 
-    // Step 11: Save extracted data
-    await fs.writeFile("extracted_listings.json", JSON.stringify(extractedData, null, 4), "utf-8");
 
-    // Step 12: Return extracted data
+
+
+
+    // Step 5: Save extracted data
+    await fs.writeFile("extracted_listings.json", JSON.stringify(enriched, null, 4), "utf-8");
+
+    // Step 6: Return extracted data
     return res.json(extractedData);
   } catch (error) {
     console.error("Error:", error);

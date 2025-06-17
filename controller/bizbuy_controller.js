@@ -1,6 +1,6 @@
 import { chromium } from 'playwright';
 
-async function runBizBuySellPlaywright() {
+export async function runBizBuySellPlaywright() {
   try{
       const browser = await chromium.launch({ headless: false });
       const page = await browser.newPage();
@@ -52,4 +52,3 @@ async function runBizBuySellPlaywright() {
 
 }
 
-export default runBizBuySellPlaywright;
