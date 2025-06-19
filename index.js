@@ -12,7 +12,8 @@ const app = express();
 app.use(express.json());
 
 // Getting the endpoints
-const BIZBUYSELL_ENDPOINT = process.env.BIZBUYSELL_ENDPOINT
+const BIZBUYSELL_ENDPOINT = process.env.BIZBUYSELL_ENDPOINT;
+const BIZSTART_URL = process.env.BIZSTART_URL;
 
 
 // route to extract listings from the target websites 
@@ -20,35 +21,40 @@ const BIZBUYSELL_ENDPOINT = process.env.BIZBUYSELL_ENDPOINT
 app.get("/extract-listings", async (req, res) => {
   try {
     // Step 1: Add filters to bizbuysell website
-    const bizResponse = await runBizBuySellPlaywright();
-    if (!bizResponse || (bizResponse.statusCode !== 200 && bizResponse.statusCode !== 201)) {
-      return res.status(500).json({
-        error: `Failed to fetch data from Apify for LoopNet. Status: ${bizResponse?.status}`,
-      });
-    }
-    const bizStartUrl = bizResponse.body.filteredUrl;
+
+    // console.log("Starting BizBuySell extraction...");
+    // const bizResponse = await runBizBuySellPlaywright();
+    // if (!bizResponse || (bizResponse.statusCode !== 200 && bizResponse.statusCode !== 201)) {
+    //   return res.status(500).json({
+    //     error: `Failed to fetch data from Apify for LoopNet. Status: ${bizResponse?.status}`,
+    //   });
+    // }
+
+    // console.log("BizBuySell extraction completed successfully.");
     const istDate = new Date().toLocaleDateString("en-IN", {
       timeZone: "Asia/Kolkata",
     });
 
 
-    // Step 2: Create request payload for bizbuysell
+
+    // Step 1: Create request payload for bizbuysell
     const BIZREQUEST_PAYLOAD = {
       maxItems: 100,
       startUrls: [
-        bizStartUrl
+        BIZSTART_URL
       ],
     };
 
-    // Step 3: Request BizBuySell data
+    // Step 2: Request BizBuySell data
+    console.log("Using Apfiy actor to fetch BizBuySell data...");
     const bizResp = await axios.post(BIZBUYSELL_ENDPOINT, BIZREQUEST_PAYLOAD);
     if (bizResp.status !== 201) {
       return res.status(500).json({ error: `Failed to fetch data from Apify. Status: ${bizResp.status}` });
     }
     const rawBizData = bizResp.data;
+    console.log("Data fetched from BizBuySell apify actor successfully.");
 
-
-    // Step 4: Extract & transform BizBuySell data from structured array
+    // Step 3: Extract & transform BizBuySell data from structured array
     const extractedData = rawBizData.map((item) => ({
       "DATE ADDED": item["DATE ADDED"],
       "LISTING EXTRACTED ON": istDate,
@@ -69,7 +75,9 @@ app.get("/extract-listings", async (req, res) => {
 
 
 
-    // Step 5: Extract zillow starting urls
+    // Step 4: Extract zillow starting urls
+
+    console.log("Fetchiong Zillow listing URLs...");
     const zillowRespo = await retriveListingUrl();
     if (!zillowRespo) {
       console.error(`Failed to fetch data from Apify for Zillow normal. Status: ${zillowRespo?.status}`);
@@ -82,13 +90,16 @@ app.get("/extract-listings", async (req, res) => {
     }
 
 
-    // Step 6: Retrieve information from each listing
+    // Step 5: Retrieve information from each listing
+    console.log("Starting Zillow extraction...");
     const detailZillowRespo = await scrapeZillowListings(listingUrls);
     if (!detailZillowRespo) {
       console.error(`Failed to fetch detailed data from Apify for Zillow Detail. Status: ${detailZillowRespo?.status}`);
       return;
     }
     const rawZillowData = detailZillowRespo;
+
+    console.log("Zillow extraction completed successfully.");
 
     // Step 7: Extract & transform Zillow data from structured array
     rawZillowData.forEach((item) => {
@@ -112,6 +123,8 @@ app.get("/extract-listings", async (req, res) => {
 
 
     // Step 8: Retrieve information from propstream controller
+
+    console.log("Starting Propstream extraction...");
     const propstreamRespo = await retrievePropstreamData();
     if (!propstreamRespo || propstreamRespo.status !== 200) { 
       console.error(`Failed to fetch data from Propstream. Status: ${propstreamRespo?.status}`);
