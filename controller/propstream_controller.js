@@ -3,7 +3,7 @@ import { chromium } from 'playwright';
 import fs from 'fs/promises';
 
 export async function retrievePropstreamData() {
-    const browser = await chromium.launch({ headless: false });
+    const browser = await chromium.launch();
     const page = await browser.newPage();
     const results = [];
 

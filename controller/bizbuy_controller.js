@@ -2,7 +2,14 @@ import { chromium } from 'playwright';
 
 export async function runBizBuySellPlaywright() {
   try{
-      const browser = await chromium.launch({ headless: false });
+const browser = await chromium.launch({
+  headless: true,
+  args: [
+    '--no-sandbox',
+    '--disable-setuid-sandbox',
+    '--disable-http2'
+  ]
+});
       const page = await browser.newPage();
 
       await page.goto('https://www.bizbuysell.com/texas/dallas-fort-worth-metroplex-businesses-for-sale/');
