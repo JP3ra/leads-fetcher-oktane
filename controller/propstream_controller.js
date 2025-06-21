@@ -1,9 +1,8 @@
-
 import { chromium } from 'playwright';
 import fs from 'fs/promises';
 
 export async function retrievePropstreamData() {
-    const browser = await chromium.launch({ headless: true });
+    const browser = await chromium.launch({ headless: true }); // set to false for debugging
     const page = await browser.newPage();
     const results = [];
 
@@ -14,8 +13,18 @@ export async function retrievePropstreamData() {
     ];
 
     const safeClick = async (selector, timeout = 30000) => {
-        await page.waitForSelector(selector, { state: 'visible', timeout });
-        await page.click(selector);
+        for (let i = 0; i < 5; i++) {
+            try {
+                await page.waitForSelector(selector, { state: 'visible', timeout });
+                await page.click(selector, { timeout: 3000 });
+                return;
+            } catch (err) {
+                console.warn(`Retry ${i + 1} failed clicking ${selector}:`, err.message);
+                await page.waitForTimeout(1000 * (i + 1));
+            }
+        }
+        await page.screenshot({ path: `click_fail_${selector.replace(/\W/g, '')}.png` });
+        throw new Error(`Failed to click ${selector} after retries`);
     };
 
     const getTextSafely = async (selector, fallback = 'N/A') => {
@@ -55,12 +64,29 @@ export async function retrievePropstreamData() {
     const tryClosePopup = async () => {
         try {
             await page.keyboard.press('Escape');
-            await page.waitForSelector('a.src-app-Search-Results-style__BKQRC__name', { timeout: 5000 });
+            await page.waitForTimeout(500);
         } catch { }
     };
 
+    const closeSessionOverlayIfExists = async () => {
+        try {
+            const overlaySelector = 'div[class*="SessionOverlay"]';
+            const overlay = await page.$(overlaySelector);
+            if (overlay) {
+                console.log('Session overlay detected. Attempting to close...');
+                await page.keyboard.press('Escape');
+                await page.waitForSelector(overlaySelector, { state: 'hidden', timeout: 5000 });
+                console.log('Overlay closed.');
+            }
+        } catch (err) {
+            console.warn('Could not close overlay:', err.message);
+        }
+    };
+
     try {
+        console.log("Starting Propstream extraction...");
         await page.goto('https://login.propstream.com/', { waitUntil: 'networkidle' });
+
         await page.fill('input[name="username"]', 'operations@wwrdallas.com');
         await page.fill('input[name="password"]', 'Ishan0727#');
         await page.click('button[type="submit"]');
@@ -69,6 +95,7 @@ export async function retrievePropstreamData() {
         for (const savedSearchName of savedSearchNames) {
             console.log(`Starting search: ${savedSearchName}`);
 
+            await closeSessionOverlayIfExists();
             await safeClick('text=Filter');
             await safeClick('div[class*="dropdownSaveSerchBtn"]');
             await safeClick(`h4:has-text("${savedSearchName}")`);
@@ -120,10 +147,20 @@ export async function retrievePropstreamData() {
             }
         }
 
+        try {
+            console.log('🔒 Logging out of PropStream...');
+            await page.getByRole('link', { name: 'Log Out' }).click();
+            await page.waitForTimeout(1000);
+            console.log('✅ Successfully logged out.');
+        } catch (logoutError) {
+            console.warn('⚠️ Logout failed:', logoutError.message);
+        }
+
+        console.log("logged out");
         return {
             status: 200,
-            body: {scrapedResults: results}
-        }
+            body: { scrapedResults: results }
+        };
         // await fs.writeFile('all_properties.json', JSON.stringify(results, null, 2));
         // console.log(`Scraped ${results.filter(r => !r.error).length} properties total`);
         // console.log('Results saved to all_properties.json');
@@ -135,8 +172,5 @@ export async function retrievePropstreamData() {
         await browser.close();
     }
 };
-
-
-
 
 // retrievePropstreamData();
