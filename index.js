@@ -2,8 +2,8 @@ import express from "express"
 import axios from "axios"
 import fs from "fs/promises"
 import dotenv from "dotenv"
-import {runBizBuySellPlaywright} from "./controller/bizbuy_controller.js";
-import { retriveListingUrl, scrapeZillowListings, findDate} from "./controller/zillow_controller.js";
+import { runBizBuySellPlaywright } from "./controller/bizbuy_controller.js";
+import { retriveListingUrl, scrapeZillowListings, findDate } from "./controller/zillow_controller.js";
 import { retrievePropstreamData } from "./controller/propstream_controller.js";
 import { enrichBrokerData } from "./controller/apollo_controllers.js";
 dotenv.config();
@@ -55,23 +55,30 @@ app.get("/extract-listings", async (req, res) => {
     console.log("Data fetched from BizBuySell apify actor successfully.");
 
     // Step 3: Extract & transform BizBuySell data from structured array
-    const extractedData = rawBizData.map((item) => ({
-      "DATE ADDED": item["DATE ADDED"],
-      "LISTING EXTRACTED ON": istDate,
-      SOURCE: "BIZ BUY SELL",
-      LOCATION: item["LOCATION"] || null,
-      TITLE: item["TITLE"] || null,
-      PRICE: item["PRICE"] || null,
-      EBITDA: item["EBITDA"] || "Not Disclosed",
-      REVENUE: item["REVENUE"] || null,
-      "CASH FLOW": item["CASH FLOW"] || null,
-      "LINK TO DEAL": item["LINK TO DEAL"] || null,
-      "BROKER FIRM": item["INTERMEDIARY FIRM"] || null,
-      "BROKER NAME": item["INTERMEDIARY NAME"] || null,
-      "BROKER PHONE NUMBER": item["INTERMEDIARY PHONE"] || null,
-      "BROKER EMAIL": "N/A"
+    const extractedData = rawBizData.map((item) => {
+      const [firstName, ...rest] = (item["INTERMEDIARY NAME"] || "").trim().split(" ");
+      const lastName = rest.length > 0 ? rest.join(" ") : null;
 
-    }));
+      return {
+        "DATE ADDED": item["DATE ADDED"],
+        "LISTING EXTRACTED ON": istDate,
+        SOURCE: "BIZ BUY SELL",
+        LOCATION: item["LOCATION"] || null,
+        TITLE: item["TITLE"] || null,
+        PRICE: item["PRICE"] || null,
+        EBITDA: item["EBITDA"] || "Not Disclosed",
+        REVENUE: item["REVENUE"] || null,
+        "CASH FLOW": item["CASH FLOW"] || null,
+        "LINK TO DEAL": item["LINK TO DEAL"] || null,
+        "BROKER FIRM": item["INTERMEDIARY FIRM"] || null,
+        "BROKER NAME": item["INTERMEDIARY NAME"] || null,
+        "BROKER FIRST NAME": firstName || null,
+        "BROKER LAST NAME": lastName,
+        "BROKER PHONE NUMBER": item["INTERMEDIARY PHONE"] || null,
+        "BROKER EMAIL": "N/A"
+      };
+    });
+
 
 
 
@@ -103,6 +110,10 @@ app.get("/extract-listings", async (req, res) => {
 
     // Step 7: Extract & transform Zillow data from structured array
     rawZillowData.forEach((item) => {
+      const fullName = item.attributionInfo?.agentName || "";
+      const [firstName, ...rest] = fullName.trim().split(" ");
+      const lastName = rest.length > 0 ? rest.join(" ") : null;
+
       extractedData.push({
         "DATE ADDED": findDate(item.daysOnZillow),
         "LISTING EXTRACTED ON": istDate,
@@ -115,24 +126,31 @@ app.get("/extract-listings", async (req, res) => {
         "CASH FLOW": "Not Disclosed",
         "LINK TO DEAL": `https://www.zillow.com/${item.hdpUrl?.replace(/^\/?/, '')}`,
         "BROKER FIRM": item.attributionInfo?.brokerName || "N/A",
-        "BROKER NAME": item.attributionInfo?.agentName || "N/A",
+        "BROKER NAME": fullName || "N/A",
+        "BROKER FIRST NAME": firstName || "N/A",
+        "BROKER LAST NAME": lastName || "N/A",
         "BROKER PHONE NUMBER": item.attributionInfo?.agentPhoneNumber || "N/A",
         "BROKER EMAIL": "N/A"
       });
     });
 
 
+
     // Step 8: Retrieve information from propstream controller
 
     console.log("Starting Propstream extraction...");
     const propstreamRespo = await retrievePropstreamData();
-    if (!propstreamRespo || propstreamRespo.status !== 200) { 
+    if (!propstreamRespo || propstreamRespo.status !== 200) {
       console.error(`Failed to fetch data from Propstream. Status: ${propstreamRespo?.status}`);
       return res.status(500).json({ error: `Failed to fetch data from Propstream. Status: ${propstreamRespo?.status}` });
     }
 
     const propstreamData = propstreamRespo.body.scrapedResults;
     propstreamData.forEach((item) => {
+      const fullName = item.agentName || "";
+      const [firstName, ...rest] = fullName.trim().split(" ");
+      const lastName = rest.length > 0 ? rest.join(" ") : null;
+
       extractedData.push({
         "DATE ADDED": item.statusDate,
         "LISTING EXTRACTED ON": istDate,
@@ -145,11 +163,14 @@ app.get("/extract-listings", async (req, res) => {
         "CASH FLOW": "Not Disclosed",
         "LINK TO DEAL": item.link || "N/A",
         "BROKER FIRM": item.brokerFirm || "N/A",
-        "BROKER NAME": item.agentName|| "N/A",
+        "BROKER NAME": fullName || "N/A",
+        "BROKER FIRST NAME": firstName || "N/A",
+        "BROKER LAST NAME": lastName || "N/A",
         "BROKER PHONE NUMBER": item.agentPhone || "N/A",
         "BROKER EMAIL": item.agentEmail || "N/A"
       });
     });
+
 
     console.log(extractedData);
 
